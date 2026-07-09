@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Check, Copy } from "lucide-react";
 
 type LinkWithCount = {
   id: string;
@@ -22,17 +23,14 @@ export default function LinkList({ links }: { links: LinkWithCount[] }) {
   return (
     <ul className="space-y-3">
       {links.map((link) => (
-        <li
-          key={link.id}
-          className="rounded-lg border border-border bg-surface p-4"
-        >
+        <li key={link.id} className="rounded-lg border border-border bg-surface p-4">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 flex-1">
               <a
                 href={`/${link.slug}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="font-mono text-base font-medium text-accent hover:underline"
+                className="rounded font-mono text-base font-medium text-accent hover:underline focus:outline-none focus:ring-2 focus:ring-lightblue"
               >
                 {`${typeof window !== "undefined" ? window.location.host : ""}/${link.slug}`}
               </a>
@@ -52,8 +50,9 @@ export default function LinkList({ links }: { links: LinkWithCount[] }) {
               </div>
               <button
                 onClick={() => handleCopy(link.id, link.slug)}
-                className="rounded-md border border-border px-3 py-1.5 text-sm text-darkblue transition-colors hover:bg-background focus:outline-none focus:ring-2 focus:ring-lightblue"
+                className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm text-darkblue transition-colors hover:bg-background focus:outline-none focus:ring-2 focus:ring-lightblue"
               >
+                {copiedId === link.id ? <Check size={14} strokeWidth={2.5} /> : <Copy size={14} strokeWidth={2.5} />}
                 {copiedId === link.id ? "Copiado" : "Copiar"}
               </button>
             </div>

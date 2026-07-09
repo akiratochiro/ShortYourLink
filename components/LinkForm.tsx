@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Check, Copy, ArrowRight } from "lucide-react";
 
 type LinkResult = {
   slug: string;
@@ -91,22 +92,24 @@ export default function LinkForm() {
           <p className="truncate font-mono text-xs text-muted line-through decoration-muted/50">
             {result.originalUrl}
           </p>
-          <span aria-hidden className="my-2 block font-mono text-xs text-muted">
-            → comprimido em
+          <span aria-hidden className="my-2 flex items-center gap-1 font-mono text-xs text-muted">
+            <ArrowRight size={12} strokeWidth={2.5} />
+            comprimido em
           </span>
           <div className="flex items-center justify-between gap-3">
             <a
               href={shortUrlFor(result.slug)}
               target="_blank"
               rel="noopener noreferrer"
-              className="truncate font-mono text-lg font-medium text-accent hover:underline"
+              className="truncate rounded font-mono text-lg font-medium text-accent hover:underline focus:outline-none focus:ring-2 focus:ring-lightblue"
             >
               {shortUrlFor(result.slug).replace(/^https?:\/\//, "")}
             </a>
             <button
               onClick={handleCopy}
-              className="shrink-0 rounded-md border border-border px-3 py-1.5 text-sm text-darkblue transition-colors hover:bg-background focus:outline-none focus:ring-2 focus:ring-lightblue"
+              className="flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm text-darkblue transition-colors hover:bg-background focus:outline-none focus:ring-2 focus:ring-lightblue"
             >
+              {copied ? <Check size={14} strokeWidth={2.5} /> : <Copy size={14} strokeWidth={2.5} />}
               {copied ? "Copiado" : "Copiar"}
             </button>
           </div>

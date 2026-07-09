@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getSessionId } from "@/lib/session";
 import LinkList from "@/components/LinkList";
 import Link from "next/link";
+import { Link2 } from "lucide-react";
 
 export default async function DashboardPage() {
   const ownerId = await getSessionId();
@@ -41,12 +42,15 @@ export default async function DashboardPage() {
         <div className="mt-10">
           {links.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border p-10 text-center">
-              <p className="text-muted">
+              <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-darkblue/5 text-darkblue">
+                <Link2 size={18} strokeWidth={2} />
+              </div>
+              <p className="mt-4 text-muted">
                 Você ainda não criou nenhum link.
               </p>
               <Link
                 href="/"
-                className="mt-4 inline-block font-medium text-lightblue hover:underline"
+                className="mt-4 inline-block rounded font-medium text-lightblue hover:underline focus:outline-none focus:ring-2 focus:ring-lightblue"
               >
                 Criar meu primeiro link
               </Link>
