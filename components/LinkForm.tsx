@@ -2,34 +2,57 @@
 
 import { useState } from "react";
 
-// TEMPORÁRIO: gera um slug falso só para visualizar o layout.
-// Será substituído por uma chamada real a POST /api/links quando
-// implementarmos lib/slug.ts e a rota da API.
-function generateMockSlug() {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let slug = "";
-  for (let i = 0; i < 6; i++) {
-    slug += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return slug;
-}
+type LinkResult = {
+  slug: string;
+  originalUrl: string;
+};
 
 export default function LinkForm() {
   const [url, setUrl] = useState("");
-  const [result, setResult] = useState<{ original: string; slug: string } | null>(null);
+  const [result, setResult] = useState<LinkResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!url.trim()) return;
+  function shortUrlFor(slug: string) {
+    return `${window.location.origin}/${slug}`;
+  }
 
-    setResult({ original: url.trim(), slug: generateMockSlug() });
-    setCopied(false);
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!url.trim() || isSubmitting) return;
+
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.error ?? "Algo deu errado. Tente novamente.");
+        setResult(null);
+        return;
+      }
+
+      setResult({ slug: data.slug, originalUrl: data.originalUrl });
+      setCopied(false);
+    } catch {
+      setError("Não foi possível conectar ao servidor.");
+      setResult(null);
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   async function handleCopy() {
     if (!result) return;
-    await navigator.clipboard.writeText(`shortyourlink.com/${result.slug}`);
+    await navigator.clipboard.writeText(shortUrlFor(result.slug));
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
@@ -45,29 +68,41 @@ export default function LinkForm() {
           type="text"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://copie-seu-link-longo-aqui.com/..."
+          placeholder="https://paste-your-long-link-here.com/..."
           className="flex-1 rounded-lg border border-border bg-surface px-4 py-3 font-mono text-sm text-foreground placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-lightblue"
         />
         <button
           type="submit"
-          className="rounded-lg bg-darkblue px-6 py-3 font-medium text-white transition-colors hover:bg-lightblue focus:outline-none focus:ring-2 focus:ring-lightblue focus:ring-offset-2 focus:ring-offset-background"
+          disabled={isSubmitting}
+          className="rounded-lg bg-darkblue px-6 py-3 font-medium text-white transition-colors hover:bg-lightblue focus:outline-none focus:ring-2 focus:ring-lightblue focus:ring-offset-2 focus:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Encurtar
+          {isSubmitting ? "Encurtando..." : "Encurtar"}
         </button>
       </form>
+
+      {error && (
+        <p className="text-sm text-red-600" role="alert">
+          {error}
+        </p>
+      )}
 
       {result && (
         <div className="motion-safe:animate-[collapse_0.4s_ease-out] rounded-lg border border-border bg-surface p-5">
           <p className="truncate font-mono text-xs text-muted line-through decoration-muted/50">
-            {result.original}
+            {result.originalUrl}
           </p>
           <span aria-hidden className="my-2 block font-mono text-xs text-muted">
             → comprimido em
           </span>
           <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-lg font-medium text-accent">
-              shortyourlink.com/{result.slug}
-            </span>
+            <a
+              href={shortUrlFor(result.slug)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="truncate font-mono text-lg font-medium text-accent hover:underline"
+            >
+              {shortUrlFor(result.slug).replace(/^https?:\/\//, "")}
+            </a>
             <button
               onClick={handleCopy}
               className="shrink-0 rounded-md border border-border px-3 py-1.5 text-sm text-darkblue transition-colors hover:bg-background focus:outline-none focus:ring-2 focus:ring-lightblue"
