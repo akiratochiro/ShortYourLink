@@ -23,6 +23,9 @@ const plexMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "ShortYourLink",
   description: "Turn long URLs into short, shareable links.",
+  icons: {
+    icon: "/link.png",
+  },
 };
 
 export default function RootLayout({
