@@ -42,12 +42,19 @@ lib/
   slug.ts                        Unique slug generation
   validation.ts                  Zod schemas
   session.ts                     Anonymous session (cookie) logic
+  rate-limit.ts                  In-memory rate limiter (fixed window)
+  client-ip.ts                   Client IP extraction (x-forwarded-for)
+  url-safety.ts                  Private/loopback host blocking (SSRF guard)
+  malicious-domains.ts           URLhaus blocklist check (best-effort)
 components/
   LinkForm.tsx                   Client Component — create link form
   LinkList.tsx                   Client Component — dashboard list
 tests/
   slug.test.ts                   Unit tests (mocked Prisma)
   validation.test.ts             Unit tests
+  rate-limit.test.ts             Unit tests
+  url-safety.test.ts             Unit tests
+  malicious-domains.test.ts      Unit tests
   api/links.test.ts              Integration tests (real test database)
 prisma/
   schema.prisma
@@ -156,6 +163,11 @@ A few non-obvious choices made along the way, documented here since the *why* is
 - **Downgraded from Prisma 7 to Prisma 6.** Prisma 7 (released days before this project started) moved datasource configuration out of `schema.prisma` and into a separate `prisma.config.ts`, requiring explicit driver adapters. That's a reasonable direction for the ecosystem, but it added configuration overhead disconnected from what this project is meant to demonstrate. Prisma 6 keeps the classic, widely-documented workflow.
 - **`nanoid@3` instead of `nanoid@4+`.** Versions 4 and above ship as ESM-only, which breaks Jest's default CommonJS module resolution for anything under `node_modules`. Rather than adding `transformIgnorePatterns` configuration to work around it, pinning to v3 (which ships both formats) avoids the extra moving part.
 - **`node:20-slim` instead of `node:20-alpine` for the Docker image.** Alpine's smaller footprint comes with more friction around Prisma's native query engine binaries; `slim` trades some image size for fewer platform-specific surprises.
+- **In-memory rate limiting instead of Redis.** The Render deployment runs a single instance, so a fixed-window counter kept in a module-level `Map` (`lib/rate-limit.ts`) needs no extra infrastructure and costs nothing. The trade-off is explicit: limits are per-instance, not global, so this stops working correctly the moment the app scales horizontally (each instance would enforce its own limit, multiplying the effective ceiling). That's an acceptable trade for a portfolio project and a well-understood one to point out in an interview — the fix, if it were ever needed, is swapping the `Map` for a Redis-backed counter behind the same `checkRateLimit` interface. Creation (`POST /api/links`) is limited both by IP (10/min — can't be bypassed by clearing cookies) and by the existing anonymous session cookie (5/min — a tighter, complementary layer so one abusive visitor on a shared IP, e.g. a corporate NAT, doesn't lock out everyone behind it). The redirect handler (`GET /[slug]`) is limited by IP *and* slug together, at a higher threshold (30/min), since legitimate clicks on a popular link can burst.
+- **SSRF/phishing mitigation is intentionally best-effort, not a reputation service.** Two independent, documented layers, both easy to reason about and to explain the limits of:
+  1. `lib/url-safety.ts` rejects `localhost`, loopback, RFC 1918 private ranges, link-local addresses (including the `169.254.169.254` cloud metadata IP), and `.local`/`.internal` hostnames — synchronously, at validation time, with no DNS lookup. That's a conscious gap: a public domain that *resolves* to a private IP (DNS rebinding) slips through, since closing that fully would require resolving DNS at creation time and re-validating at redirect time (the answer can change in between) — disproportionate effort for a project with no real traffic to defend.
+  2. `lib/malicious-domains.ts` checks the target hostname against [URLhaus](https://urlhaus.abuse.ch/) (abuse.ch's free, no-API-key malware/phishing feed), cached in memory for 6h and refreshed lazily. It fails open on purpose: if the feed can't be fetched, link creation is never blocked because a third-party outage isn't this app's problem to enforce. This only catches domains already reported to URLhaus — no zero-day phishing detection, no crawling, no scoring. Both limitations are called out in the code comments, not just here.
+- **Security headers (`next.config.ts`) use a CSP tuned to what actually ships**, not a generic template. Because `next/font/google` self-hosts fonts at build time and the app has no inline `<script>`, `dangerouslySetInnerHTML`, or third-party embeds, `script-src`/`style-src`/`font-src` can stay at `'self'` in production. The one relaxation (`'unsafe-eval'` for scripts, `'unsafe-inline'` for styles) is gated behind `NODE_ENV === "development"`, matching Next's own guidance — React's dev-mode error reconstruction needs `eval`, and Fast Refresh injects inline `<style>` tags for CSS hot-reload; neither happens in a production build. `X-Frame-Options: DENY` is kept alongside CSP's `frame-ancestors 'none'` for older browsers that don't read the CSP directive.
 
 ## License
 

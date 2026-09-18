@@ -33,4 +33,14 @@ describe("createLinkSchema", () => {
     const result = createLinkSchema.safeParse({});
     expect(result.success).toBe(false);
   });
+
+  it("rejeita localhost e endereços de loopback", () => {
+    expect(createLinkSchema.safeParse({ url: "http://localhost:3000" }).success).toBe(false);
+    expect(createLinkSchema.safeParse({ url: "http://127.0.0.1/admin" }).success).toBe(false);
+  });
+
+  it("rejeita IPs privados e o endereço de metadata de nuvem", () => {
+    expect(createLinkSchema.safeParse({ url: "http://192.168.1.1" }).success).toBe(false);
+    expect(createLinkSchema.safeParse({ url: "http://169.254.169.254/latest/meta-data/" }).success).toBe(false);
+  });
 });
