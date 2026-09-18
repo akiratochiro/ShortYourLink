@@ -25,3 +25,12 @@ export const createLinkSchema = z.object({
 });
 
 export type CreateLinkInput = z.infer<typeof createLinkSchema>;
+
+// Compartilhado entre app/dashboard/page.tsx e GET /api/links, para que os
+// dois pontos de leitura validem exatamente os mesmos parâmetros de paginação.
+export const linksQuerySchema = z.object({
+  cursor: z.string().min(1).optional(),
+  direction: z.enum(["next", "prev"]).optional(),
+});
+
+export type LinksQueryInput = z.infer<typeof linksQuerySchema>;

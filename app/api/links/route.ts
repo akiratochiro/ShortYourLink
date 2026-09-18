@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { createLinkSchema } from "@/lib/validation";
+import { createLinkSchema, linksQuerySchema } from "@/lib/validation";
 import { generateUniqueSlug } from "@/lib/slug";
 import { getOrCreateSessionId, SESSION_COOKIE_NAME } from "@/lib/session";
 import { getClientIp } from "@/lib/client-ip";
@@ -10,6 +10,7 @@ import {
   rateLimitResponseHeaders,
 } from "@/lib/rate-limit";
 import { isKnownMaliciousDomain } from "@/lib/malicious-domains";
+import { getLinksPage } from "@/lib/links-pagination";
 
 // Por IP: barra abuso distribuído/anônimo, e não pode ser contornado
 // simplesmente apagando o cookie de sessão.
@@ -90,18 +91,22 @@ export async function POST(request: NextRequest) {
   return NextResponse.json(link, { status: 201 });
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const ownerId = await getOrCreateSessionId();
 
-  const links = await prisma.link.findMany({
-    where: { ownerId },
-    orderBy: { createdAt: "desc" },
-    include: {
-      _count: {
-        select: { clicks: true },
-      },
-    },
+  const parsedQuery = linksQuerySchema.safeParse({
+    cursor: request.nextUrl.searchParams.get("cursor") ?? undefined,
+    direction: request.nextUrl.searchParams.get("direction") ?? undefined,
   });
 
-  return NextResponse.json(links);
+  if (!parsedQuery.success) {
+    return NextResponse.json(
+      { error: parsedQuery.error.issues[0]?.message ?? "Parâmetros de paginação inválidos." },
+      { status: 400 }
+    );
+  }
+
+  const page = await getLinksPage({ ownerId, ...parsedQuery.data });
+
+  return NextResponse.json(page);
 }

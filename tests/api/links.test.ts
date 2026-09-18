@@ -1,6 +1,8 @@
 import { testApiHandler } from "next-test-api-route-handler";
 import * as appHandler from "@/app/api/links/route";
 import { prisma } from "@/lib/prisma";
+import { LINKS_PAGE_SIZE } from "@/lib/links-pagination";
+import { SESSION_COOKIE_NAME } from "@/lib/session";
 
 beforeEach(async () => {
   await prisma.click.deleteMany();
@@ -120,9 +122,104 @@ describe("GET /api/links", () => {
           headers: { cookie: sessionCookie },
         });
 
-        const links = await res.json();
-        expect(links).toHaveLength(1);
-        expect(links[0].originalUrl).toBe("https://do-visitante-um.com");
+        const data = await res.json();
+        expect(data.links).toHaveLength(1);
+        expect(data.links[0].originalUrl).toBe("https://do-visitante-um.com");
+      },
+    });
+  });
+});
+
+describe("GET /api/links — paginação", () => {
+  const ownerId = "test-owner-pagination";
+  const cookie = `${SESSION_COOKIE_NAME}=${ownerId}`;
+  const total = LINKS_PAGE_SIZE + 5;
+
+  beforeEach(async () => {
+    // createdAt crescente para garantir ordem determinística (mais novo primeiro).
+    for (let i = 0; i < total; i++) {
+      await prisma.link.create({
+        data: {
+          slug: `pg${i.toString().padStart(4, "0")}`,
+          originalUrl: `https://example.com/${i}`,
+          ownerId,
+          createdAt: new Date(Date.now() + i * 1000),
+        },
+      });
+    }
+  });
+
+  it("retorna a primeira página cheia, com nextCursor e sem prevCursor", async () => {
+    await testApiHandler({
+      appHandler,
+      test: async ({ fetch }) => {
+        const res = await fetch({ method: "GET", headers: { cookie } });
+        const data = await res.json();
+
+        expect(data.links).toHaveLength(LINKS_PAGE_SIZE);
+        expect(data.nextCursor).not.toBeNull();
+        expect(data.prevCursor).toBeNull();
+        // O link mais recente (criado por último) deve vir primeiro.
+        expect(data.links[0].originalUrl).toBe(`https://example.com/${total - 1}`);
+      },
+    });
+  });
+
+  it("avança para a segunda página e volta para a primeira sem perder itens", async () => {
+    let firstPageIds: string[] = [];
+    let nextCursor = "";
+
+    await testApiHandler({
+      appHandler,
+      test: async ({ fetch }) => {
+        const res = await fetch({ method: "GET", headers: { cookie } });
+        const data = await res.json();
+        firstPageIds = data.links.map((link: { id: string }) => link.id);
+        nextCursor = data.nextCursor;
+      },
+    });
+
+    let secondPageIds: string[] = [];
+    let prevCursor = "";
+
+    await testApiHandler({
+      appHandler,
+      url: `/?cursor=${nextCursor}&direction=next`,
+      test: async ({ fetch }) => {
+        const res = await fetch({ method: "GET", headers: { cookie } });
+        const data = await res.json();
+
+        expect(data.links).toHaveLength(total - LINKS_PAGE_SIZE);
+        expect(data.nextCursor).toBeNull();
+        expect(data.prevCursor).not.toBeNull();
+
+        secondPageIds = data.links.map((link: { id: string }) => link.id);
+        prevCursor = data.prevCursor;
+      },
+    });
+
+    // Nenhum item repetido entre as duas páginas.
+    expect(secondPageIds.some((id) => firstPageIds.includes(id))).toBe(false);
+
+    await testApiHandler({
+      appHandler,
+      url: `/?cursor=${prevCursor}&direction=prev`,
+      test: async ({ fetch }) => {
+        const res = await fetch({ method: "GET", headers: { cookie } });
+        const data = await res.json();
+
+        expect(data.links.map((link: { id: string }) => link.id)).toEqual(firstPageIds);
+      },
+    });
+  });
+
+  it("rejeita um parâmetro direction inválido com 400", async () => {
+    await testApiHandler({
+      appHandler,
+      url: "/?direction=sideways",
+      test: async ({ fetch }) => {
+        const res = await fetch({ method: "GET", headers: { cookie } });
+        expect(res.status).toBe(400);
       },
     });
   });

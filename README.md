@@ -34,9 +34,10 @@ A full-stack URL shortener with click analytics, built as a portfolio project to
 ```
 app/
   page.tsx                       Landing page (Server Component)
-  dashboard/page.tsx             Links + click stats (Server Component)
+  dashboard/page.tsx             Links + click stats, paginated (Server Component)
   [slug]/route.ts                Redirect handler (GET) + click logging
-  api/links/route.ts             POST (create link), GET (list links)
+  api/links/route.ts             POST (create link), GET (list links, paginated)
+  api/links/[id]/route.ts        DELETE (remove a link, owner-checked)
 lib/
   prisma.ts                      Prisma Client singleton
   slug.ts                        Unique slug generation
@@ -46,16 +47,21 @@ lib/
   client-ip.ts                   Client IP extraction (x-forwarded-for)
   url-safety.ts                  Private/loopback host blocking (SSRF guard)
   malicious-domains.ts           URLhaus blocklist check (best-effort)
+  links-pagination.ts            Cursor-based pagination, shared by dashboard + API
+  click-stats.ts                 Daily click aggregation (raw SQL, on demand)
 components/
   LinkForm.tsx                   Client Component — create link form
-  LinkList.tsx                   Client Component — dashboard list
+  LinkList.tsx                   Client Component — dashboard list, pagination nav, delete
+  Sparkline.tsx                  Presentational — inline SVG bar chart, no charting lib
 tests/
   slug.test.ts                   Unit tests (mocked Prisma)
   validation.test.ts             Unit tests
   rate-limit.test.ts             Unit tests
   url-safety.test.ts             Unit tests
   malicious-domains.test.ts      Unit tests
-  api/links.test.ts              Integration tests (real test database)
+  click-stats.test.ts            Unit tests (mocked Prisma)
+  api/links.test.ts              Integration tests — create, list, pagination (real test database)
+  api/links-id.test.ts           Integration tests — delete, ownership checks (real test database)
 prisma/
   schema.prisma
   migrations/
@@ -65,7 +71,7 @@ Dockerfile
 
 ### Key architectural choices
 
-**Server Components fetch data directly.** `dashboard/page.tsx` queries Prisma directly instead of calling its own `/api/links` route — no point in a server-to-server HTTP round trip when the data fetching can happen where the page is rendered. The `/api/links` route exists for the client-side form (`LinkForm.tsx`), which runs in the browser and genuinely needs an HTTP endpoint.
+**Server Components fetch data directly.** `dashboard/page.tsx` calls the same `lib/links-pagination.ts` and `lib/click-stats.ts` helpers that `GET /api/links` uses, instead of fetching its own API route — no point in a server-to-server HTTP round trip when the data fetching can happen where the page is rendered. The `/api/links` route exists for the client-side form (`LinkForm.tsx`) and the delete button (`LinkList.tsx`), which run in the browser and genuinely need an HTTP endpoint.
 
 **Anonymous sessions via signed cookie, no auth.** A UUID is generated on first visit and stored in an `httpOnly`, `sameSite=lax` cookie. This scopes links to a visitor without the overhead of a full auth system, which was intentionally out of scope for this MVP.
 
@@ -167,7 +173,14 @@ A few non-obvious choices made along the way, documented here since the *why* is
 - **SSRF/phishing mitigation is intentionally best-effort, not a reputation service.** Two independent, documented layers, both easy to reason about and to explain the limits of:
   1. `lib/url-safety.ts` rejects `localhost`, loopback, RFC 1918 private ranges, link-local addresses (including the `169.254.169.254` cloud metadata IP), and `.local`/`.internal` hostnames — synchronously, at validation time, with no DNS lookup. That's a conscious gap: a public domain that *resolves* to a private IP (DNS rebinding) slips through, since closing that fully would require resolving DNS at creation time and re-validating at redirect time (the answer can change in between) — disproportionate effort for a project with no real traffic to defend.
   2. `lib/malicious-domains.ts` checks the target hostname against [URLhaus](https://urlhaus.abuse.ch/) (abuse.ch's free, no-API-key malware/phishing feed), cached in memory for 6h and refreshed lazily. It fails open on purpose: if the feed can't be fetched, link creation is never blocked because a third-party outage isn't this app's problem to enforce. This only catches domains already reported to URLhaus — no zero-day phishing detection, no crawling, no scoring. Both limitations are called out in the code comments, not just here.
-- **Security headers (`next.config.ts`) use a CSP tuned to what actually ships**, not a generic template. Because `next/font/google` self-hosts fonts at build time and the app has no inline `<script>`, `dangerouslySetInnerHTML`, or third-party embeds, `script-src`/`style-src`/`font-src` can stay at `'self'` in production. The one relaxation (`'unsafe-eval'` for scripts, `'unsafe-inline'` for styles) is gated behind `NODE_ENV === "development"`, matching Next's own guidance — React's dev-mode error reconstruction needs `eval`, and Fast Refresh injects inline `<style>` tags for CSS hot-reload; neither happens in a production build. `X-Frame-Options: DENY` is kept alongside CSP's `frame-ancestors 'none'` for older browsers that don't read the CSP directive.
+- **Security headers (`next.config.ts`) use a CSP tuned to what actually ships**, not a generic template. Because `next/font/google` self-hosts fonts at build time and the app has no inline `<script>`, `dangerouslySetInnerHTML`, or third-party embeds, `script-src`/`style-src`/`font-src` can stay at `'self'` in production. The one relaxation (`'unsafe-eval'` for scripts, `'unsafe-inline'` for styles) is gated behind `NODE_ENV === "development"`, matching Next's own guidance — React's dev-mode error reconstruction needs `eval`, and Fast Refresh injects inline `<style>` tags for CSS hot-reload; neither happens in a production build. `X-Frame-Options: DENY` is kept alongside CSP's `frame-ancestors 'none'` for older browsers that don't read the CSP directive. This constraint is also why `components/Sparkline.tsx` sizes its bars with SVG geometry attributes (`x`/`y`/`width`/`height`) instead of inline `style="height: …"` — an inline `style` attribute is exactly what a strict `style-src` (no `'unsafe-inline'`) blocks in production, while SVG presentation attributes aren't CSS and aren't covered by that directive at all.
+- **Cursor-based pagination, not offset/`skip`.** `lib/links-pagination.ts` anchors each page on a real link `id` (`cursor: { id }, skip: 1`) rather than a page number. With offset pagination, a link created by the same visitor while they're on page 2 shifts every row after it by one position, so the next `skip: 10` either repeats or skips a row depending on timing — a real risk here since link creation is unthrottled by the dashboard itself. Cursor pagination is immune to that because it's anchored to a row, not a position. The one deliberate gap: if the link used as a page's boundary cursor gets deleted (the new `DELETE` endpoint makes this newly possible) mid-navigation, Prisma can't find that anchor row and returns an empty page instead of failing — `dashboard/page.tsx` detects "empty page, but a cursor was given" and shows a "go back to the start" message instead of the misleading "you have no links yet" empty state. A cursor *stack* that could always recover the exact previous page was considered and rejected as unnecessary complexity for a list a visitor is very unlikely to have 50+ tabs deep into. Going backward reuses the same `getLinksPage()` call with a negative Prisma `take` (documented, standard cursor-pagination technique) instead of tracking visited cursors in the URL. `GET /api/links` accepts the identical `cursor`/`direction` query params (validated by the same `linksQuerySchema`) as the dashboard, and its response shape changed from a bare array to `{ links, nextCursor, prevCursor }` — a deliberate breaking change to that route's contract, reflected in the updated assertions in `tests/api/links.test.ts`.
+- **Click aggregation: on-demand raw SQL, not a materialized table.** The alternative — a `DailyClickStat` table updated on every click insert (or recomputed by a scheduled job) — trades a slow read for a slower, riskier write path: every click insert would need a second write (or a cron job introducing staleness and a new moving part to deploy on Render, which has no built-in scheduler on the free tier). For the traffic this project actually sees, `SELECT date_trunc('day', "timestamp"), COUNT(*) ... GROUP BY` runs in single-digit milliseconds against the new `Click_linkId_timestamp_idx` composite index (see migration below), so there's no real read-latency problem to solve by pre-aggregating. Prisma's `groupBy` can't express `date_trunc` (it only groups by literal columns, not expressions), so this is one of the few places in the app using `$queryRaw` — parameterized through Prisma's tagged template, not string concatenation. `lib/click-stats.ts` batches all links on a dashboard page into one query (`linkId IN (...)`) instead of one query per link, and fills days with zero clicks client-side so `components/Sparkline.tsx` never has to reason about gaps.
+- **Link delete is a hard delete, not a soft delete (`deletedAt`).** Soft delete means every existing read path — the dashboard list, `GET /api/links`, the redirect handler, the slug-uniqueness check in `lib/slug.ts`, and now the click aggregation — has to remember to filter out soft-deleted rows, and forgetting it in just one of those is a silent bug (a "deleted" link that still redirects, or still counts toward someone's click stats). Hard delete has no such failure mode: `prisma.link.delete()` reuses the `onDelete: Cascade` already declared on `Click.link` (no schema change needed for this one), so a link and its click history disappear together, atomically, in every place at once. Since there's no "trash" or "recover" UI in scope, keeping soft-deleted history around wouldn't be exercised by anything — it'd be complexity paid for upfront with no feature behind it. `DELETE /api/links/[id]` also returns a uniform `404` for both "link doesn't exist" and "link exists but belongs to another session," rather than `403` for the latter — a `403` would confirm to any visitor that a given link `id` exists at all, a small but avoidable enumeration leak given links are addressed by guessable-ish `cuid`s rather than a per-owner index.
+
+### Migrations added in this round
+
+- `20260918142327_add_click_linkid_timestamp_index` — replaces `Click_linkId_idx` with a composite `Click_linkId_timestamp_idx` on `(linkId, timestamp)`. It fully covers the old index's use case (leftmost-prefix rule: any query filtering on `linkId` alone still uses it) while adding support for the new `WHERE linkId = ... AND timestamp >= ...` click-aggregation query. Pagination and delete needed no schema change — pagination reuses the existing `id`/`createdAt` columns, and hard delete reuses the cascade that already existed.
 
 ## License
 

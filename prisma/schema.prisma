@@ -32,5 +32,9 @@ model Click {
   referrer  String?
   userAgent String?
 
-  @@index([linkId])
+  // Índice composto (substitui o antigo @@index([linkId])) para suportar a
+  // agregação diária de clicks (WHERE linkId = ... AND timestamp >= ...),
+  // mantendo a mesma cobertura para consultas que filtram só por linkId
+  // (regra do prefixo à esquerda em índices compostos do Postgres).
+  @@index([linkId, timestamp])
 }
