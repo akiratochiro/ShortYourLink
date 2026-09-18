@@ -101,6 +101,7 @@ export default function LinkForm() {
               href={shortUrlFor(result.slug)}
               target="_blank"
               rel="noopener noreferrer"
+              data-testid="short-link-result"
               className="truncate rounded font-mono text-lg font-medium text-accent hover:underline focus:outline-none focus:ring-2 focus:ring-lightblue"
             >
               {shortUrlFor(result.slug).replace(/^https?:\/\//, "")}

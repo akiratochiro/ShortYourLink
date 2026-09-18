@@ -108,7 +108,10 @@ export default function LinkList({ links, clickStats, nextCursor, prevCursor }: 
                 <Sparkline data={clickStats[link.id] ?? []} />
 
                 <div className="text-right">
-                  <span className="block text-lg font-semibold text-darkblue">
+                  <span
+                    data-testid="click-count"
+                    className="block text-lg font-semibold text-darkblue"
+                  >
                     {link._count.clicks}
                   </span>
                   <span className="block text-xs text-muted">

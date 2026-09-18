@@ -40,4 +40,19 @@ describe("isPrivateOrLoopbackHost", () => {
     expect(isPrivateOrLoopbackHost("172.15.0.1")).toBe(false);
     expect(isPrivateOrLoopbackHost("172.32.0.1")).toBe(false);
   });
+
+  it("bloqueia endereços IPv6 unique-local (fc00::/7)", () => {
+    expect(isPrivateOrLoopbackHost("fc00::1")).toBe(true);
+    expect(isPrivateOrLoopbackHost("fd12:3456::1")).toBe(true);
+  });
+
+  it("permite um endereço IPv6 público comum", () => {
+    expect(isPrivateOrLoopbackHost("2001:4860:4860::8888")).toBe(false);
+  });
+
+  it("resolve endereços IPv4 mapeados em IPv6 pelo IPv4 embutido", () => {
+    expect(isPrivateOrLoopbackHost("::ffff:127.0.0.1")).toBe(true);
+    expect(isPrivateOrLoopbackHost("::ffff:192.168.1.1")).toBe(true);
+    expect(isPrivateOrLoopbackHost("::ffff:8.8.8.8")).toBe(false);
+  });
 });

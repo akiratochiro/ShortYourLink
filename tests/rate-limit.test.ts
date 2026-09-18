@@ -1,4 +1,4 @@
-import { checkRateLimit } from "@/lib/rate-limit";
+import { checkRateLimit, isRateLimitEnabled, rateLimitResponseHeaders } from "@/lib/rate-limit";
 
 describe("checkRateLimit", () => {
   it("permite requisições até o limite, dentro da mesma janela", () => {
@@ -44,5 +44,33 @@ describe("checkRateLimit", () => {
 
     expect(resultA.allowed).toBe(false);
     expect(resultB.allowed).toBe(true);
+  });
+});
+
+describe("isRateLimitEnabled", () => {
+  it("fica desabilitado durante a suíte de testes (NODE_ENV=test)", () => {
+    expect(isRateLimitEnabled()).toBe(false);
+  });
+});
+
+describe("rateLimitResponseHeaders", () => {
+  it("monta Retry-After e os headers X-RateLimit-* a partir do resultado", () => {
+    const result = checkRateLimit(`headers:${Math.random()}`, 5, 60_000);
+    const headers = rateLimitResponseHeaders(result) as Record<string, string>;
+
+    expect(headers["X-RateLimit-Limit"]).toBe("5");
+    expect(headers["X-RateLimit-Remaining"]).toBe("4");
+    expect(Number(headers["Retry-After"])).toBeGreaterThan(0);
+  });
+
+  it("nunca devolve Retry-After negativo, mesmo se resetAt já passou", () => {
+    const headers = rateLimitResponseHeaders({
+      allowed: false,
+      limit: 1,
+      remaining: 0,
+      resetAt: Date.now() - 1000,
+    }) as Record<string, string>;
+
+    expect(headers["Retry-After"]).toBe("0");
   });
 });

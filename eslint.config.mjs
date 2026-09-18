@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Gerados localmente por `npm run test:coverage` (istanbul) e
+    // `npm run test:e2e` (Playwright) — não fazem parte do código-fonte.
+    "coverage/**",
+    "playwright-report/**",
+    "test-results/**",
   ]),
 ]);
 

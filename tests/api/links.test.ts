@@ -85,8 +85,9 @@ describe("POST /api/links", () => {
 });
 
 describe("GET /api/links", () => {
-  it("retorna apenas os links da sessão do próprio visitante", async () => {
-    let sessionCookie = "";
+  it("retorna apenas os links da sessão do próprio visitante, nas duas direções", async () => {
+    let sessionCookieA = "";
+    let sessionCookieB = "";
 
     // Primeiro visitante cria um link e recebe um cookie de sessão.
     await testApiHandler({
@@ -97,7 +98,7 @@ describe("GET /api/links", () => {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ url: "https://do-visitante-um.com" }),
         });
-        sessionCookie = res.headers.get("set-cookie") ?? "";
+        sessionCookieA = res.headers.get("set-cookie") ?? "";
       },
     });
 
@@ -105,11 +106,12 @@ describe("GET /api/links", () => {
     await testApiHandler({
       appHandler,
       test: async ({ fetch }) => {
-        await fetch({
+        const res = await fetch({
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ url: "https://do-visitante-dois.com" }),
         });
+        sessionCookieB = res.headers.get("set-cookie") ?? "";
       },
     });
 
@@ -119,12 +121,27 @@ describe("GET /api/links", () => {
       test: async ({ fetch }) => {
         const res = await fetch({
           method: "GET",
-          headers: { cookie: sessionCookie },
+          headers: { cookie: sessionCookieA },
         });
 
         const data = await res.json();
         expect(data.links).toHaveLength(1);
         expect(data.links[0].originalUrl).toBe("https://do-visitante-um.com");
+      },
+    });
+
+    // E o segundo visitante, na direção oposta, não vê o link do primeiro.
+    await testApiHandler({
+      appHandler,
+      test: async ({ fetch }) => {
+        const res = await fetch({
+          method: "GET",
+          headers: { cookie: sessionCookieB },
+        });
+
+        const data = await res.json();
+        expect(data.links).toHaveLength(1);
+        expect(data.links[0].originalUrl).toBe("https://do-visitante-dois.com");
       },
     });
   });

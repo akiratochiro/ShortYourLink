@@ -5,7 +5,22 @@ const isDev = process.env.NODE_ENV === "development";
 // CSP calibrada para o que a aplicação de fato usa:
 // - next/font/google faz self-hosting das fontes no build (sem domínio externo),
 //   então font-src/style-src não precisam abrir para fonts.googleapis.com.
-// - Não há <script> inline, dangerouslySetInnerHTML nem next/script no projeto.
+// - Não há dangerouslySetInnerHTML nem next/script no projeto — mas o App
+//   Router do Next injeta <script> inline pra hidratação (o payload RSC de
+//   cada página), tanto em dev quanto em build de produção. Descoberto via
+//   o teste E2E (e2e/create-visit-and-track.spec.ts): sem 'unsafe-inline'
+//   em script-src, o Chrome bloqueia esses scripts e a hidratação nunca
+//   completa — o app carrega, mas nenhum clique/formulário funciona, sem
+//   nenhum erro visível fora do console do navegador. `curl` (usado pra
+//   validar a CSP na rodada anterior) não pega isso porque não executa JS
+//   nem aplica CSP; só um browser real revela o problema.
+//   A alternativa "correta" é CSP baseada em nonce via um `proxy.ts`
+//   (documentado no guia de CSP do Next), que evita 'unsafe-inline' — mas
+//   exige renderização dinâmica em toda página que usa o nonce (a landing
+//   page hoje é estática) e um novo arquivo de infraestrutura só pra isso.
+//   Desproporcional para o tráfego deste projeto; 'unsafe-inline' em
+//   script-src é uma concessão explícita, com o resto da política (sem
+//   object-src, sem frame-ancestors, form-action restrito) intacto.
 // - 'unsafe-inline' em style-src só é liberado em dev: o Fast Refresh do
 //   Next injeta <style> inline para hot-reload de CSS; o build de produção
 //   serve o CSS do Tailwind como arquivo externo, então lá a diretiva fica estrita.
@@ -13,7 +28,7 @@ const isDev = process.env.NODE_ENV === "development";
 //   próprio guia de CSP do Next: o React usa eval em dev para stack traces melhores.
 const cspHeader = `
   default-src 'self';
-  script-src 'self'${isDev ? " 'unsafe-eval'" : ""};
+  script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""};
   style-src 'self'${isDev ? " 'unsafe-inline'" : ""};
   img-src 'self' data:;
   font-src 'self';
