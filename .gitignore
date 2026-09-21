@@ -50,3 +50,6 @@ next-env.d.ts
 /app/generated/prisma
 
 /lib/generated/prisma
+
+# but keep the documented example
+!.env.example

@@ -8,6 +8,14 @@ A full-stack URL shortener with click analytics, built as a portfolio project to
 
 > Note: the live demo runs on Render's free tier, so the first request after a period of inactivity may take 30–60 seconds while the service wakes up.
 
+
+
+<p align="center">
+  <img src="docs/screenshots/landing.png" alt="ShortYourLink landing page" width="48%">
+  <img src="docs/screenshots/dashboard.png" alt="Dashboard with links and click counts" width="48%">
+</p>
+
+
 ---
 
 ## What it does
@@ -27,6 +35,7 @@ A full-stack URL shortener with click analytics, built as a portfolio project to
 | ORM | Prisma 6 |
 | Validation | Zod |
 | Styling | Tailwind CSS v4 |
+| Observability | Sentry (`@sentry/nextjs`, error capture only, optional) + `GET /api/health` |
 | Testing | Jest (unit + integration) + Playwright (E2E) |
 | Containerization | Docker + Docker Compose (multi-stage build) |
 | Deployment | Render (app) + Neon (production database) |
@@ -40,6 +49,11 @@ app/
   [slug]/route.ts                Redirect handler (GET) + click logging
   api/links/route.ts             POST (create link), GET (list links, paginated)
   api/links/[id]/route.ts        DELETE (remove a link, owner-checked)
+  api/health/route.ts            GET health check (app + database)
+  global-error.tsx               Root error boundary, reports to Sentry
+instrumentation.ts               Server-side Sentry init + onRequestError hook
+instrumentation-client.ts        Browser-side Sentry init
+sentry.server.config.ts          Sentry server options (DSN from env)
 lib/
   prisma.ts                      Prisma Client singleton
   slug.ts                        Unique slug generation
@@ -67,6 +81,7 @@ tests/
   api/links.test.ts              Integration tests — create, list, pagination, session isolation (real test database)
   api/links-id.test.ts           Integration tests — delete, ownership checks (real test database)
   api/redirect.test.ts           Integration tests — redirect, 404, click logging (real test database)
+  api/health.test.ts             Integration tests — 200 when DB is up, 503 (no driver details leaked) when not
 e2e/
   create-visit-and-track.spec.ts Playwright — create link → visit → dashboard click count
 prisma/
@@ -117,6 +132,18 @@ npm run dev
 ```
 
 Visit `http://localhost:3000`.
+
+### Environment variables
+
+Only `DATABASE_URL` is required. See [`.env.example`](.env.example) for the full list.
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `DATABASE_URL` | yes | PostgreSQL connection string |
+| `SENTRY_DSN` | no | Server-side error reporting (Route Handlers, Server Components) |
+| `NEXT_PUBLIC_SENTRY_DSN` | no | Browser-side error reporting (Client Components). Inlined at **build** time |
+
+Without the Sentry variables the SDK initializes as a no-op: nothing is sent, nothing breaks, and local dev/tests behave exactly as before.
 
 ### Running everything in Docker (app + database)
 
@@ -179,6 +206,19 @@ The application is deployed on **Render** (Docker-based Web Service), while the 
 
 The `Dockerfile` runs `prisma migrate deploy` on container start, so schema changes are applied automatically on every deploy.
 
+### Observability
+
+**Error tracking.** [Sentry](https://sentry.io) (free tier) captures unhandled exceptions on both sides: `instrumentation.ts` hooks Next's `onRequestError` for Route Handlers and Server Components, and `instrumentation-client.ts` + `app/global-error.tsx` cover the browser and render errors in Client Components. It is error capture only — tracing, replay and PII are off — and the existing `console` logs are untouched. To enable it, create a Sentry project and set the DSN variables above. On Render, `NEXT_PUBLIC_SENTRY_DSN` must be set before the build (the `Dockerfile` accepts it as a build arg). Browser events are sent through a same-origin `/monitoring` tunnel, so the CSP's `connect-src 'self'` stays as strict as before.
+
+**Health check.** `GET /api/health` reports whether the app is up and whether Postgres answers a `SELECT 1` (5s timeout):
+
+```
+200 {"status":"ok","database":"ok"}
+503 {"status":"error","database":"unreachable"}
+```
+
+Point an external monitor (e.g. UptimeRobot's free tier) or Render's *Health Check Path* setting at it. The 503 body is deliberately generic; the underlying error is logged server-side only. Note that on Neon's free tier each check wakes the database, so a short polling interval keeps it from scaling to zero.
+
 ## What's intentionally out of the MVP
 
 These were deliberate scope decisions, not oversights:
@@ -188,6 +228,18 @@ These were deliberate scope decisions, not oversights:
 - QR code generation
 - Link expiration
 - Data export (CSV/PDF)
+
+## Roadmap / Next steps
+
+Directions for the product and architecture beyond the MVP gaps above, in no particular order and with no dates:
+
+- **Richer analytics** — referrer and device/browser breakdowns, unique-vs-repeat visitors, and coarse geography, all derivable from the click data already stored plus a small amount of user-agent parsing.
+- **Documented public API** — an OpenAPI spec for `/api/links`, API keys, and per-key rate limits, so links can be created programmatically.
+- **Shared rate limiting** — move `lib/rate-limit.ts` from the in-memory `Map` to a Redis-backed counter behind the same `checkRateLimit` interface, which is what horizontal scaling would require.
+- **CI pipeline** — run lint, Jest, and Playwright on every push, and replace the static coverage badge with a self-updating one.
+- **Nonce-based CSP** — drop `'unsafe-inline'` from `script-src` via a `proxy.ts`, at the cost of dynamic rendering for the landing page.
+- **Click data retention and scale** — pruning or rolling up old clicks, and moving to pre-aggregated daily stats if on-demand aggregation ever becomes the bottleneck.
+- **Tracing** — enable Sentry performance tracing or OpenTelemetry once there is real traffic worth profiling.
 
 ## Notable technical decisions & trade-offs
 
@@ -210,12 +262,14 @@ A few non-obvious choices made along the way, documented here since the *why* is
 - **The E2E run found a real bug the rest of the suite couldn't see.** `curl`, used to validate the CSP headers when they were first added, doesn't execute JavaScript — it never noticed that `script-src` was silently blocking Next's own hydration scripts and breaking every interactive element in the app. Playwright, driving a real Chromium, surfaced it on the first run. Covered in detail in the CSP bullet above; kept here too because it's the strongest argument in this README for *why* E2E tests earn their cost on top of Jest's integration tests: they're the only layer that actually renders the page in a real browser with real security headers enforced.
 - **E2E targets the same test database as the Jest integration suite (`.env.test`), on purpose, and always starts a fresh server for it.** Introducing a third database just for Playwright would be one more thing to provision and document for no real benefit — `.env.test` is already isolated from both the local dev database and (critically) production. `playwright.config.ts` sets `reuseExistingServer: false` unconditionally, even locally: Playwright's default local behavior is to reuse whatever dev server is already listening on the port, and this project's own `.env` happens to point `next dev` at the **production Neon database** by default. If a stray `npm run dev` were already running when `npm run test:e2e` starts, silently reusing it would mean E2E test data — link creates, clicks — lands in production. `reuseExistingServer: false` costs a few seconds of cold start per run in exchange for eliminating that risk entirely; a real incident during this project's development (caught and cleaned up manually) is exactly why this isn't a hypothetical concern. E2E test data does still accumulate in `shortyourlink_test` across repeated runs (each run gets a fresh anonymous session, so old rows don't affect assertions, but nothing prunes them) — an occasional `TRUNCATE "Click", "Link"` against the test database is the manual cleanup, same as any other test-database housekeeping.
 - **Coverage is scoped to `lib/**/*.ts` and `app/**/route.ts`, not the whole repo.** This Jest suite has zero component tests (`LinkForm.tsx`, `LinkList.tsx`, `Sparkline.tsx`) and zero tests of `page.tsx`/`layout.tsx` — that surface is covered by the Playwright E2E suite instead. Including untested UI files in the coverage number wouldn't reflect a real gap to close, just permanently dilute the percentage. The measured baseline this round, before picking a threshold, was 82.8% statements; after closing a couple of legitimately-easy gaps found while measuring (`lib/client-ip.ts` had no dedicated test at all, `lib/url-safety.ts`'s IPv6 branches and `lib/rate-limit.ts`'s header-building helper were untested), it's **85.66%**. Two files stay well below that on purpose, not from neglect: `app/[slug]/route.ts` and `app/api/links/route.ts` both have a rate-limiting branch gated by `isRateLimitEnabled()` (`NODE_ENV !== "test"`), so it's structurally unreachable in Jest — the limiter itself is fully covered in isolation (`tests/rate-limit.test.ts`). `lib/malicious-domains.ts` sits at 55%, because its `getMaliciousDomains()` also short-circuits under `NODE_ENV=test` before ever touching the network, by design — same reasoning as the rate limiter, and the parsing logic it depends on (`parseHostfileToDomains`) is separately covered. `coverageThreshold` in `jest.config.ts` (80/70/75/80) sits a few points under the real, current numbers: a regression floor, set from what was actually measured, not a round number picked in advance.
+- **Sentry for error capture, with tracing/replay/PII off and a same-origin tunnel.** The goal was visibility into silent production failures, not a full APM, so `tracesSampleRate` is `0` and nothing beyond exceptions is collected — also keeps the free-tier quota for errors. The SDK is inert without a DSN, so dev, Jest, and Docker keep working unconfigured. Browser events would normally go straight to `*.ingest.sentry.io`, which the strict `connect-src 'self'` CSP blocks; rather than widening the CSP for a third-party domain, `tunnelRoute: "/monitoring"` proxies them through the app (trade-off: a little extra traffic through the Render instance, and ad blockers that filter Sentry no longer drop events). `NEXT_PUBLIC_SENTRY_DSN` is inlined at build time, hence the Docker build arg. A DSN is not a secret (it only permits sending events), so exposing it to the browser is by design. Handled errors (like the fetch failure message in `LinkForm`) are intentionally not reported — that would just be noise from users going offline.
+- **Health check reports database reachability only, with a generic 503.** `GET /api/health` (under `/api`, matching the other endpoints and keeping it out of the `/[slug]` namespace) runs `SELECT 1` with a 5s cap, so a Neon cold start yields a clear 503 rather than a hung monitor. The response never includes the driver error, since the endpoint is public. It doesn't call the URLhaus feed or anything else external: a third-party outage shouldn't mark this app as down.
 - **Coverage badge is a static `shields.io` image, updated by hand — not Codecov or Coveralls.** Both of those need a CI pipeline to upload a report to; this project doesn't have CI yet (out of scope for this round, by the user's own instruction), so wiring either one up now would mean maintaining an integration with nothing currently triggering it. A static badge (`img.shields.io/badge/coverage-86%25-green`, no token, no account, no external service polling this repo) needs nothing but remembering to edit the URL after `npm run test:coverage` shows a materially different number — the honest trade is that it can go stale if forgotten, which is disclosed right next to the badge. The natural follow-up, once CI exists, is switching to Codecov/Coveralls for a badge that updates itself on every push; not worth the setup before there's a pipeline to hang it on.
 
 ### Migrations
 
 - `20260918142327_add_click_linkid_timestamp_index` (previous round) — replaces `Click_linkId_idx` with a composite `Click_linkId_timestamp_idx` on `(linkId, timestamp)`. It fully covers the old index's use case (leftmost-prefix rule: any query filtering on `linkId` alone still uses it) while adding support for the `WHERE linkId = ... AND timestamp >= ...` click-aggregation query.
-- None this round — redirect/session tests, Playwright, and coverage are test infrastructure only; no schema changed.
+- None this round — observability (Sentry, health check) and docs only; no schema changed.
 
 ## License
 

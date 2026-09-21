@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs/config";
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -66,4 +67,11 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// Sem upload de source maps (decisão consciente: stack traces minificados
+// bastam para este projeto). tunnelRoute envia eventos do browser via
+// /monitoring (mesma origem), o que mantém `connect-src 'self'` da CSP intacto.
+export default withSentryConfig(nextConfig, {
+  silent: !process.env.CI,
+  sourcemaps: { disable: true },
+  tunnelRoute: "/monitoring",
+});

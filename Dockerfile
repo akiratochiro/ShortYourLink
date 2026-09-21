@@ -11,6 +11,8 @@ RUN npm ci
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# Inlinado no bundle do browser em build time (opcional; vazio = Sentry inerte no cliente)
+ARG NEXT_PUBLIC_SENTRY_DSN
 RUN npx prisma generate
 RUN npm run build
 
